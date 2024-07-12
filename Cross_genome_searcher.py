@@ -15,8 +15,8 @@ import argparse
 
 
 def command_line_interface(args):
-	parser = argparse.ArgumentParser(description='Comming soon!',
-                                     add_help=False)
+	parser = argparse.ArgumentParser(description='script to assess whether genomes have repeat regions symmetrically (+-30kb) across the genome',
+                                     add_help=True)
 	parser.add_argument('-g',
 	'--genomes',
 	help='a path to input genomes',
@@ -32,6 +32,21 @@ def command_line_interface(args):
 	dest='output_folder',
 	type=str)
 
+	parser.add_argument('-l',
+	'--length',
+	help='length of the sliding window (in bp) - default 3000bp',
+	required=False,
+	dest='length',
+	default='3000',
+	type=str)
+
+	parser.add_argument('-i',
+	'--inverted_repeats',
+	help='restricts search to ONLY consider inverted repeats',
+	required=False,
+	dest='inverted_repeats',
+	action='store_true')
+
 	if len(args) < 1:
 		parser.print_help()
 		exit(1)
@@ -40,7 +55,6 @@ def command_line_interface(args):
 		exit(1)
 
 	args = parser.parse_args(args)
-
 	return args
 
 
@@ -139,9 +153,9 @@ def split_genome(fixed_start_genome):
 	
 
 ### Construct micro windows
-def create_windows(file_1, file_2):
-	input_args_sliding_1 = ['seqkit', 'sliding', '-g', '-s', '500', '-W', '3000', '-o', f'{file_1}_windows', file_1]
-	input_args_sliding_2 = ['seqkit', 'sliding', '-g', '-s', '500', '-W', '3000', '-o', f'{file_2}_windows', file_2]
+def create_windows(file_1, file_2, length):
+	input_args_sliding_1 = ['seqkit', 'sliding', '-g', '-s', '500', '-W', length, '-o', f'{file_1}_windows', file_1]
+	input_args_sliding_2 = ['seqkit', 'sliding', '-g', '-s', '500', '-W', length, '-o', f'{file_2}_windows', file_2]
 
 	subprocess.run(input_args_sliding_1)
 	subprocess.run(input_args_sliding_2)
@@ -159,7 +173,7 @@ def create_windows(file_1, file_2):
 
 
 ### Cluster all seqeunces in macro windows
-def cluster_windows(window_file_1, window_file_2, name_list_1, name_list_2, output_folder):
+def cluster_windows(window_file_1, window_file_2, name_list_1, name_list_2, output_folder,inverted):
 	# Calculate the number of seqeunces needed to cover a window of a set size:
 	num_seq_to_clust = 30000 // 500
 
@@ -192,6 +206,8 @@ def cluster_windows(window_file_1, window_file_2, name_list_1, name_list_2, outp
 
 		# cd-hit to find similarities
 		cdhit_args = ['cd-hit-est-2d', '-i', read_sub_set_1, '-i2', read_sub_set_2, '-o', cluster_out_name, '-d', '0', '-s', '0.8', '-c', '0.8', '-g', '0', '-n', '5'] # Word size changed and -g changed from 1 to 0
+		if inverted:
+			cdhit_args.extend(['-r', '0']) ### add in the -r 0 flag if --inverted repeats flag is specified in argparse.
 		subprocess.run(cdhit_args, capture_output=True, check=True)
 
 		# Find if any clusters that contain more than one seqeunce
@@ -279,16 +295,16 @@ def write_output(output_list, output_folder):
 		output_file_writer.writerows(output_list)
 
 
-def process_genome(input_genome_path, output_folder, tmp_folder):
+def process_genome(input_genome_path, output_folder, tmp_folder, inverted, length):
 	First_genome_part = split_genome_parts(input_genome_path, tmp_folder)
 
 	fixed_start_genome = circlator_fix_start(First_genome_part, tmp_folder, output_folder)
 
 	split_genome_1, split_genome_2, half_genome_size = split_genome(fixed_start_genome)
 
-	part_1_names, part_2_names = create_windows(split_genome_1, split_genome_2)
+	part_1_names, part_2_names = create_windows(split_genome_1, split_genome_2, length)
 
-	connected_intervals = cluster_windows(f"{split_genome_1}_windows", f"{split_genome_2}_windows", part_1_names, part_2_names, tmp_folder)
+	connected_intervals = cluster_windows(f"{split_genome_1}_windows", f"{split_genome_2}_windows", part_1_names, part_2_names, tmp_folder, inverted)
 	
 	merge_overlaps = []
 
@@ -301,7 +317,8 @@ def process_genome(input_genome_path, output_folder, tmp_folder):
 
 if __name__ == '__main__':
 	cmd_args = command_line_interface(sys.argv[1:])
-
+	inverted=cmd_args.inverted_repeats
+	length=cmd_args.length
 	output_list = []
 	# input_list = os.listdir(path='Complete_fasta_genomes/') #['Complete_fasta_genomes/GCF_901482645.1_42017_F01_genomic.fna', 'Complete_fasta_genomes/GCF_000011665.1_ASM1166v1_genomic.fna', 'Complete_fasta_genomes/GCF_000006785.2_ASM678v2_genomic.fna']
 	# input_list = ['Complete_fasta_genomes/' + file for file in input_list if '.fna' in file]
@@ -310,7 +327,7 @@ if __name__ == '__main__':
 	tmp_folder_path = tempfile.TemporaryDirectory()
 	
 	with concurrent.futures.ProcessPoolExecutor(max_workers=6) as executor:
-		results = [executor.submit(process_genome, genome, cmd_args.output_folder, tmp_folder_path.name) for genome in cmd_args.input_genomes]
+		results = [executor.submit(process_genome, genome, cmd_args.output_folder, tmp_folder_path.name, inverted, length) for genome in cmd_args.input_genomes]
 		 
 		res_index = 1
 		for f in concurrent.futures.as_completed(results):
