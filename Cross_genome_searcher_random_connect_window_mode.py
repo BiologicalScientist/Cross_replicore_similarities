@@ -16,7 +16,7 @@ import argparse
 
 def command_line_interface(args):
 	parser = argparse.ArgumentParser(description='script to assess whether genomes have repeat regions asymmetrically across the genome (opposing replichores)',
-                                     add_help=False)
+                                     add_help=True)
 	parser.add_argument('-g',
 	'--genomes',
 	help='a path to input genomes',
